@@ -30,6 +30,8 @@ namespace SaberMod
         private string bladeOrigColor;
         private int clickCounter;
         private bool colorCycling;
+        private bool isDarksaber;
+        private Material darksaberCutout;
 
         public void Awake()
         {
@@ -45,7 +47,7 @@ namespace SaberMod
             isSaberOn = false;
             saberDropped = false;
             saberCycling = false;
-            idleVol = 0.8f;
+            idleVol = 1.0f;
             ignitionOnVol = 1.0f;
             ignitionOffVol = 1.0f;
             saberBladesHolder = item.transform.Find("SaberBlade");
@@ -56,6 +58,8 @@ namespace SaberMod
             {
                 pierce2 = pierce2t.gameObject;
             }
+            //set telegrab distance (default: 1)
+            item.distantGrabSafeDistance = 3f;
 
             //set custom references
             ignitionOnSound = item.GetCustomReference("ignitionOnSound").GetComponent<AudioSource>();
@@ -66,6 +70,11 @@ namespace SaberMod
             ignitionOnSound.volume = ignitionOnVol;
             ignitionOffSound.volume = ignitionOffVol;
             idleSound.volume = idleVol;
+            if (item.gameObject.name.Contains("Darksaber"))
+            {
+                isDarksaber = true;
+                darksaberCutout = item.transform.Find("darksaber").GetComponent<MeshRenderer>().materials[2];
+            }
 
             //for each blade, shrink and disable on awake
             for (int i = 0; i < saberBladesHolder.childCount; i++)
@@ -75,9 +84,14 @@ namespace SaberMod
                 bladeOnScales.Add(new Vector3(0, blade.transform.localScale.y, 0));
                 bladeOffScales.Add(new Vector3(0, -blade.transform.localScale.y, 0));
                 blade.transform.localScale = new Vector3(blade.transform.localScale.x, 0, blade.transform.localScale.z);
-                blade.GetComponent<CapsuleCollider>().enabled = false;
+                blade.GetComponent<Collider>().enabled = false;
                 //bladeOrigColor = blade.GetComponent<Renderer>().material.GetColor("_EmissionColor");
                 bladeOrigColor = blade.GetComponent<Renderer>().material.name;
+                //bladeLight = blade.transform.Find("Light").GetComponent<Light>();
+                if (i == 1)
+                {
+                   //bladeLight2 = blade.transform.Find("Light").GetComponent<Light>();
+                }
                 blade.SetActive(false);
             }
 
@@ -85,7 +99,7 @@ namespace SaberMod
             whoosh.GetComponent<WhooshPoint>().minVelocity = 9999.0f;
             whoosh.GetComponent<WhooshPoint>().maxVelocity = 9999.0f;
 
-            //set up color changing variables
+            //set up color changing variables, and light glows to match
             colorCycling = false;
             switch (bladeOrigColor.ToString())
             {
@@ -102,6 +116,9 @@ namespace SaberMod
                     clickCounter = 4;
                     break;
                 case "RedBlade (Instance)":
+                    clickCounter = 5;
+                    break;
+                case "WhiteBlade (Instance)":
                     clickCounter = 0;
                     break;
             }
@@ -168,9 +185,16 @@ namespace SaberMod
                     co = StartCoroutine(ToggleSaber("off", "drop"));
                 }
             }
+
+            //testing fly stuff
+            if (throwing)
+            {
+                item.flyThrowAngle = 45f;
+                item.flyRotationSpeed = 50f;
+            }
         }
 
-        //whne player grabs saber by telekinesis
+        //when player grabs saber by telekinesis
         protected void OnTelekinesisGrabEvent(Handle handle, SpellTelekinesis teleGrabber)
         {
             //if saber was dropped and is currently turning off process
@@ -275,8 +299,58 @@ namespace SaberMod
                         //Debug.Log("turning saber " + item.gameObject.name + " on by telekinesis");
                         co = StartCoroutine(ToggleSaber("on", "tele"));
                     }
-                }
+                }             
             }
+        }
+
+        public void FixedUpdate()
+        {
+            if(item.lastHandler != null && !item.IsHanded() && !item.isTelekinesisGrabbed)
+            {
+                //if saber is not being held, but was held last by player and player presses grip and trigger, recall to player
+                if (item.lastHandler.creature == Player.currentCreature && (PlayerControl.GetHand(PlayerControl.handRight.side).gripPressed ||
+                PlayerControl.GetHand(PlayerControl.handLeft.side).gripPressed))
+                {
+                    Handle handleL = item.mainHandleLeft;
+                    Transform playerLeftHand = Player.currentCreature.handLeft.transform;
+                    Transform playerRightHand = Player.currentCreature.handRight.transform;
+                    Rigidbody rb = item.GetComponent<Rigidbody>();
+                    float speed = 10.0f;
+
+                    //pull the saber back to the hand that gripped
+                    if (PlayerControl.GetHand(PlayerControl.handLeft.side).gripPressed && !Player.currentCreature.handLeft.grabbedHandle)
+                    {
+                        //Debug.Log("distance to left hand: " + Vector3.Distance(item.transform.position, playerLeftHand.position));
+                        //if saber is not currently in hand, pull to hand
+                        if (Vector3.Distance(item.transform.position, playerLeftHand.position) > 0.1f)
+                        {
+                            Vector3 playerHandPos = playerLeftHand.position - item.transform.position;
+                            rb.velocity = playerHandPos.normalized * speed;
+                        }
+                        else
+                        {
+                            //make player grab saber in hand
+                            Player.currentCreature.handLeft.Grab(handleL);
+                        }
+
+                    }
+                    else if (PlayerControl.GetHand(PlayerControl.handRight.side).gripPressed && !Player.currentCreature.handRight.grabbedHandle)
+                    {
+                        //Debug.Log("distance to right hand: " + Vector3.Distance(item.transform.position, playerRightHand.position));
+                        //if saber is not currently in hand, pull to hand
+                        if (Vector3.Distance(item.transform.position, playerRightHand.position) > 0.1f)
+                        {
+                            Vector3 playerHandPos = playerRightHand.position - item.transform.position;
+                            rb.velocity = playerHandPos.normalized * speed;
+                        }
+                        else
+                        {
+                            //make player grab saber in hand
+                            Player.currentCreature.handRight.Grab(handleL);
+                        }
+                    }
+                }
+            }       
         }
 
         private IEnumerator SwapColor(GameObject blade, int counter)
@@ -291,20 +365,35 @@ namespace SaberMod
                     Color blueglow = new Color(0, 0, 191);
                     blade.GetComponent<Renderer>().material.SetColor("_Color", blue);
                     blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", blueglow * 0.05f);
+                    if (isDarksaber)
+                    {
+                        darksaberCutout.SetColor("_Color", blue);
+                        darksaberCutout.SetColor("_EmissionColor", blueglow * 0.02f);
+                    }
                     break;
                 case "2":
                     //green
                     Color green = new Color(0, 255, 30, 130);
                     Color greenglow = new Color(0, 191, 0);
                     blade.GetComponent<Renderer>().material.SetColor("_Color", green);
-                    blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", greenglow * 0.05f);
+                    blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", greenglow * 0.03f);
+                    if (isDarksaber)
+                    {
+                        darksaberCutout.SetColor("_Color", green);
+                        darksaberCutout.SetColor("_EmissionColor", greenglow * 0.02f);
+                    }
                     break;
                 case "3":
                     //yellow
                     Color yellow = new Color(255, 229, 0, 130);
                     Color yellowglow = new Color(191, 173, 0);
                     blade.GetComponent<Renderer>().material.SetColor("_Color", yellow);
-                    blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", yellowglow * 0.05f);
+                    blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", yellowglow * 0.03f);
+                    if (isDarksaber)
+                    {
+                        darksaberCutout.SetColor("_Color", yellow);
+                        darksaberCutout.SetColor("_EmissionColor", yellowglow * 0.02f);
+                    }
                     break;
                 case "4":
                     //pruple
@@ -312,18 +401,38 @@ namespace SaberMod
                     Color purpleglow = new Color(60, 0, 191);
                     blade.GetComponent<Renderer>().material.SetColor("_Color", purple);
                     blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", purpleglow * 0.05f);
+                    if (isDarksaber)
+                    {
+                        darksaberCutout.SetColor("_Color", purple);
+                        darksaberCutout.SetColor("_EmissionColor", purpleglow * 0.02f);
+                    }
                     break;
                 case "5":
                     Color red = new Color(255, 0, 0, 130);
                     Color redglow = new Color(191, 0, 0);
                     blade.GetComponent<Renderer>().material.SetColor("_Color", red);
                     blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", redglow * 0.05f);
-                    //red
+                    if (isDarksaber)
+                    {
+                        darksaberCutout.SetColor("_Color", red);
+                        darksaberCutout.SetColor("_EmissionColor", redglow * 0.02f);
+                    }
+                    break;
+                case "6":
+                    Color white = new Color(255, 255, 255, 130);
+                    Color whiteglow = new Color(191, 191, 191);
+                    blade.GetComponent<Renderer>().material.SetColor("_Color", white);
+                    blade.GetComponent<Renderer>().material.SetColor("_EmissionColor", whiteglow * 0.03f);
+                    if (isDarksaber)
+                    {
+                        darksaberCutout.SetColor("_Color", white);
+                        darksaberCutout.SetColor("_EmissionColor", whiteglow * 0.02f);
+                    }
                     //if saber is double bladed
-                    if(saberBlades.Count > 1)
+                    if (saberBlades.Count > 1)
                     {
                         //and blade changing is second blade, reset counter to 0
-                        if(saberBlades.IndexOf(blade) == 1)
+                        if (saberBlades.IndexOf(blade) == 1)
                         {
                             clickCounter = 0;
                         }
@@ -408,7 +517,7 @@ namespace SaberMod
                 blade.gameObject.SetActive(true);
             }
             //turn off collider of blade
-            blade.GetComponent<CapsuleCollider>().enabled = false;
+            blade.GetComponent<Collider>().enabled = false;
 
             float rate = 1 / t;
             float index = 0f;
@@ -441,7 +550,7 @@ namespace SaberMod
             else
             {
                 //when saber turns on
-                blade.GetComponent<CapsuleCollider>().enabled = true;
+                blade.GetComponent<Collider>().enabled = true;
             }
             //reset colliders after length change
             item.ResetColliderCollision();
